@@ -12,6 +12,8 @@ This project is the backend core of the app.  It is an [apollo-server](https://w
 
 ```
 cd resolveBackend
+npm install
+npm run compile-gql-types
 npm start
 open http://localhost:4000/
 ```
@@ -31,6 +33,8 @@ You can preview the server response via the graphql interface
 (make sure backend is running)
 ```
 cd resolve-frontend
+npm install
+npm run compile-gql-types
 npm start
 (browser should auto launch to the site) localhost:3000
 hit the fetch button or enter another entity id to fetch a different entity.
