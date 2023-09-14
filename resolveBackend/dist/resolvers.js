@@ -46,7 +46,7 @@ function getRowAttrsToGQLAttrs(row) {
 async function getAttributes(db, entityId) {
     return new Promise((resolve, reject) => {
         const retData = {};
-        console.log("trying to get sqlite rows", entityId);
+        let name;
         db.serialize(() => {
             // because we are sending back a graphql model lets just assume it's a view model being passed back to client to be displayed directly
             // there is probably a way to get the types directly from the sqlite db... im assuming these are standarized somewhere
@@ -63,8 +63,10 @@ async function getAttributes(db, entityId) {
                     console.error(err);
                     reject(err);
                 }
-                // console.log("got a row:", row);
                 const category = row.category;
+                if (category == "__name__") {
+                    name = row.attr_vals;
+                }
                 // filter all categories starting with "__" (internal)
                 if (!category.match(/^__/)) {
                     if (category in retData === false) {
@@ -73,11 +75,7 @@ async function getAttributes(db, entityId) {
                     retData[category].push(row);
                 }
             }, () => {
-                // console.log("ret data?", retData);
-                // for (const key in retData) {
-                //   console.log("category: ", key);
-                // }
-                resolve(retData);
+                resolve([name, retData]);
             });
         });
     });
@@ -91,7 +89,6 @@ export const resolvers = {
             const startTime = Date.now();
             //
             let dbData;
-            console.log("what are args?", args);
             try {
                 // checking if database is downloaded already
                 dbData = await fs.promises.access(dbFilePath);
@@ -107,7 +104,7 @@ export const resolvers = {
             try {
                 const db = await createDb(dbFilePath);
                 if (db instanceof sqlite3.Database) {
-                    const dbData = await getAttributes(db, args.id);
+                    const [entityName, dbData] = await getAttributes(db, args.id);
                     let categories;
                     for (const cat in dbData) {
                         const catInData = dbData[cat];
@@ -126,11 +123,11 @@ export const resolvers = {
                             });
                         }
                     }
-                    //console.log('what is final categories?', categories[0]);
                     const endTime = Date.now();
-                    console.log("returning entity", args.id, endTime - startTime);
+                    console.log(`returning entity - ${args.id}, ${endTime - startTime}ms`);
                     return {
                         id: args.id,
+                        name: entityName,
                         categories,
                     };
                 }

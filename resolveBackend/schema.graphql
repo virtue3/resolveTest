@@ -19,6 +19,7 @@ type EntityCategory {
 
 type Entity {
   id: ID!
+  name: String!
   categories: [EntityCategory]
 }
 

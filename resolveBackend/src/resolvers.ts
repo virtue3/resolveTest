@@ -76,16 +76,17 @@ type EntityAtttributeRow = {
 async function getAttributes(
   db: sqlite3.Database,
   entityId
-): Promise<{ [key: string]: EntityAtttributeRow[] }> {
+): Promise<[string, { [key: string]: EntityAtttributeRow[] }]> {
   return new Promise((resolve, reject) => {
     const retData: { [key: string]: EntityAtttributeRow[] } = {};
+    let name;
 
     db.serialize(() => {
       // because we are sending back a graphql model lets just assume it's a view model being passed back to client to be displayed directly
 
       // there is probably a way to get the types directly from the sqlite db... im assuming these are standarized somewhere
       db.each(
-        // exclude hidden categories in sql select
+        // do as much work in sqlite as we can as it's faster and we've already paid the cost of loading it.
         `SELECT oa.*, GROUP_CONCAT(ov.value) as attr_vals
         FROM _objects_attr oa
         JOIN _objects_eav oe ON oa.id = oe.attribute_id
@@ -101,6 +102,10 @@ async function getAttributes(
 
           const category = row.category;
 
+          if(category == "__name__") {
+            name = row.attr_vals;
+          }
+
           // filter all categories starting with "__" (internal)
           if (!category.match(/^__/)) {
             if (category in retData === false) {
@@ -111,7 +116,7 @@ async function getAttributes(
           }
         },
         () => {
-          resolve(retData);
+          resolve([name, retData]);
         }
       );
     });
@@ -134,9 +139,15 @@ export const resolvers = {
         dbData = await fs.promises.access(dbFilePath);
       } catch (err) {
         // doesn't exist we should download
-        // this is an absolutely awful idea to stornpm rue this on local file system.
-        // at the very least I should have some sort of global locking mechanism here but we're only going to have 1 client so...
-        //  better design would involve probably storing these into some sort of redis db with FILO type caching or some such.
+        // This is a pretty ridiculous way to do this.  It definitely would need at least some sort of semaphore to make this even remotely feasible.
+        //   I'm imagining you have a lot of sqlite databases hanging out in an S3 bucket or some such and we fetch them down to deal with the objects on a
+        //     per need basis.  I imagine that your use case is not supporting too many customers at the same time; or worse yet -> completely different customers
+        //     with different data sets.  So realistically; downloading them from S3/redis to disk would work.
+        //     
+        //     I'd ideally have some sort of FILO caching of the databases either in memory or on local disk.  A local redis instance would work for that.
+        //       I cant really extrapolate without a discussion around what the sqlite db's look like (are they all around the same size?, etc).
+        //
+        //     I did specifically set this up to clear out the db after the request; 
         await downloadFile();
         console.log("downloaded, loading file");
       }
@@ -145,7 +156,7 @@ export const resolvers = {
         const db = await createDb(dbFilePath);
 
         if (db instanceof sqlite3.Database) {
-          const dbData = await getAttributes(db, args.id);
+          const [entityName, dbData] = await getAttributes(db, args.id);
 
           let categories: [EntityCategory];
 
@@ -170,6 +181,7 @@ export const resolvers = {
           console.log(`returning entity - ${args.id}, ${endTime - startTime}ms`);
           return {
             id: args.id,
+            name: entityName,
             categories,
           };
         } else {

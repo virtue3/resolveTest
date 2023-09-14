@@ -19,6 +19,7 @@ export type Entity = {
   __typename?: 'Entity';
   categories?: Maybe<Array<Maybe<EntityCategory>>>;
   id: Scalars['ID']['output'];
+  name: Scalars['String']['output'];
 };
 
 export type EntityCategory = {

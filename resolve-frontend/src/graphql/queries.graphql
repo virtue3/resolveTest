@@ -1,0 +1,16 @@
+query GetEntity($entityId: ID!) {
+  entity(id: $entityId) {
+    id
+    name
+    categories {
+      name
+      attributes {
+        name
+        displayName
+        attrVals
+        dataType
+        dataTypeContext
+      }
+    }
+  }
+}
