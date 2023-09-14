@@ -1,0 +1,31 @@
+#graphql
+# Comments in GraphQL strings (such as this one) start with the hash (#) symbol.
+
+type EntityCategoryAttribute {
+  name: String
+  dataType: Int
+  dataTypeContext: String
+  description: String
+  displayName: String
+  flags: Int
+  displayPrecision: Int
+  attrVals: String
+}
+
+type EntityCategory {
+  name: String
+  attributes: [EntityCategoryAttribute]
+}
+
+type Entity {
+  id: ID!
+  categories: [EntityCategory]
+}
+
+
+# The "Query" type is special: it lists all of the available queries that
+# clients can execute, along with the return type for each. In this
+type Query {
+  entity(id: ID): Entity
+}
+
