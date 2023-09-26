@@ -34,7 +34,7 @@ async function downloadFile() {
   }
 }
 
-async function createDb(fileName: string): Promise<sqlite3.Database | Error> {
+async function createDb(fileName: string): Promise<sqlite3.Database> {
   return new Promise((resolve, reject) => {
     const db = new sqlite3.Database(dbFilePath, (errMessage) => {
       if (errMessage) {
@@ -91,7 +91,7 @@ async function getAttributes(
         FROM _objects_attr oa
         JOIN _objects_eav oe ON oa.id = oe.attribute_id
         LEFT JOIN _objects_val ov ON oe.value_id = ov.id
-        WHERE oe.entity_id = ${entityId}
+        WHERE oe.entity_id = ${parseInt(entityId)}
         GROUP BY oa.id;
         `,
         (err, row: EntityAtttributeRow) => {
@@ -102,7 +102,7 @@ async function getAttributes(
 
           const category = row.category;
 
-          if(category == "__name__") {
+          if (category === "__name__") {
             name = row.attr_vals;
           }
 
@@ -133,7 +133,6 @@ export const resolvers = {
       //
       let dbData;
 
-
       try {
         // checking if database is downloaded already
         dbData = await fs.promises.access(dbFilePath);
@@ -143,11 +142,11 @@ export const resolvers = {
         //   I'm imagining you have a lot of sqlite databases hanging out in an S3 bucket or some such and we fetch them down to deal with the objects on a
         //     per need basis.  I imagine that your use case is not supporting too many customers at the same time; or worse yet -> completely different customers
         //     with different data sets.  So realistically; downloading them from S3/redis to disk would work.
-        //     
-        //     I'd ideally have some sort of FILO caching of the databases either in memory or on local disk.  A local redis instance would work for that.
+        //
+        //     I'd ideally have some sort of LRU caching of the databases either in memory or on local disk.  A local redis instance would work for that.
         //       I cant really extrapolate without a discussion around what the sqlite db's look like (are they all around the same size?, etc).
         //
-        //     I did specifically set this up to clear out the db after the request; 
+        //     I did specifically set this up to clear out the db after the request;
         await downloadFile();
         console.log("downloaded, loading file");
       }
@@ -155,38 +154,34 @@ export const resolvers = {
       try {
         const db = await createDb(dbFilePath);
 
-        if (db instanceof sqlite3.Database) {
-          const [entityName, dbData] = await getAttributes(db, args.id);
+        const [entityName, dbData] = await getAttributes(db, args.id);
 
-          let categories: [EntityCategory];
+        let categories: [EntityCategory];
 
-          for (const cat in dbData) {
-            const catInData = dbData[cat];
-            if (!categories) {
-              categories = [
-                {
-                  name: catInData[0].category,
-                  attributes: catInData.map(getRowAttrsToGQLAttrs),
-                },
-              ];
-            } else {
-              categories.push({
+        for (const cat in dbData) {
+          const catInData = dbData[cat];
+          if (!categories) {
+            categories = [
+              {
                 name: catInData[0].category,
                 attributes: catInData.map(getRowAttrsToGQLAttrs),
-              });
-            }
+              },
+            ];
+          } else {
+            categories.push({
+              name: catInData[0].category,
+              attributes: catInData.map(getRowAttrsToGQLAttrs),
+            });
           }
-
-          const endTime = Date.now();
-          console.log(`returning entity - ${args.id}, ${endTime - startTime}ms`);
-          return {
-            id: args.id,
-            name: entityName,
-            categories,
-          };
-        } else {
-          console.error("Could not open DB after downloading.");
         }
+
+        const endTime = Date.now();
+        console.log(`returning entity - ${args.id}, ${endTime - startTime}ms`);
+        return {
+          id: args.id,
+          name: entityName,
+          categories,
+        };
       } catch (err) {
         console.log("get error creating db, ", err);
       }
