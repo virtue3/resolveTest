@@ -13,7 +13,7 @@ sqlite3.verbose();
 
 const dbFilePath = path.join(__dirname, "props.db");
 
-async function downloadFile() {
+export async function downloadFile() {
   const fileUrl =
     "https://resolve-dev-public.s3.amazonaws.com/sample-data/interview/props.db";
 
@@ -34,7 +34,7 @@ async function downloadFile() {
   }
 }
 
-async function createDb(fileName: string): Promise<sqlite3.Database> {
+export async function createDb(fileName: string): Promise<sqlite3.Database> {
   return new Promise((resolve, reject) => {
     const db = new sqlite3.Database(dbFilePath, (errMessage) => {
       if (errMessage) {
@@ -73,28 +73,31 @@ type EntityAtttributeRow = {
   attr_vals: string;
 };
 
-async function getAttributes(
+const sqlGetAttributeRows = `
+  SELECT oa.*, GROUP_CONCAT(ov.value) as attr_vals
+  FROM _objects_attr oa
+  JOIN _objects_eav oe ON oa.id = oe.attribute_id
+  LEFT JOIN _objects_val ov ON oe.value_id = ov.id
+  WHERE oe.entity_id = ?
+  GROUP BY oa.id;
+`;
+
+export async function getAttributes(
   db: sqlite3.Database,
   entityId
 ): Promise<[string, { [key: string]: EntityAtttributeRow[] }]> {
   return new Promise((resolve, reject) => {
-    const retData: { [key: string]: EntityAtttributeRow[] } = {};
-    let name;
-
     db.serialize(() => {
-      // because we are sending back a graphql model lets just assume it's a view model being passed back to client to be displayed directly
+      // entityId has to come in as an ID from graphql
+      db.all(sqlGetAttributeRows, [entityId], (err, rows: EntityAtttributeRow[]) => {
+        if(err) { 
+          console.error(err);
+          reject(err);
+        }
 
-      // there is probably a way to get the types directly from the sqlite db... im assuming these are standarized somewhere
-      db.each(
-        // do as much work in sqlite as we can as it's faster and we've already paid the cost of loading it.
-        `SELECT oa.*, GROUP_CONCAT(ov.value) as attr_vals
-        FROM _objects_attr oa
-        JOIN _objects_eav oe ON oa.id = oe.attribute_id
-        LEFT JOIN _objects_val ov ON oe.value_id = ov.id
-        WHERE oe.entity_id = ${parseInt(entityId)}
-        GROUP BY oa.id;
-        `,
-        (err, row: EntityAtttributeRow) => {
+        const retData: { [key: string]: EntityAtttributeRow[] } = {};
+        let name;
+        for (const row of rows) {
           if (err) {
             console.error(err);
             reject(err);
@@ -114,11 +117,49 @@ async function getAttributes(
 
             retData[category].push(row);
           }
-        },
-        () => {
-          resolve([name, retData]);
         }
-      );
+
+        // finish parsing everything resolve the promise with the data.
+        resolve([name, retData]);
+      })
+
+      // because we are sending back a graphql model lets just assume it's a view model being passed back to client to be displayed directly
+
+      // there is probably a way to get the types directly from the sqlite db... im assuming these are standarized somewhere
+      // db.each(
+      //   // do as much work in sqlite as we can as it's faster and we've already paid the cost of loading it.
+      //   `SELECT oa.*, GROUP_CONCAT(ov.value) as attr_vals
+      //   FROM _objects_attr oa
+      //   JOIN _objects_eav oe ON oa.id = oe.attribute_id
+      //   LEFT JOIN _objects_val ov ON oe.value_id = ov.id
+      //   WHERE oe.entity_id = ${entityId}
+      //   GROUP BY oa.id;
+      //   `,
+      //   (err, row: EntityAtttributeRow) => {
+      //     if (err) {
+      //       console.error(err);
+      //       reject(err);
+      //     }
+
+      //     const category = row.category;
+
+      //     if (category === "__name__") {
+      //       name = row.attr_vals;
+      //     }
+
+      //     // filter all categories starting with "__" (internal)
+      //     if (!category.match(/^__/)) {
+      //       if (category in retData === false) {
+      //         retData[category] = [];
+      //       }
+
+      //       retData[category].push(row);
+      //     }
+      //   },
+      //   () => {
+      //     resolve([name, retData]);
+      //   }
+      // );
     });
   });
 }
