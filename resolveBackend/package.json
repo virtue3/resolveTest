@@ -6,8 +6,10 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "compile": "tsc",
+    "watch": "tsc --watch",
     "compile-gql-types": "graphql-codegen",
     "start": "npm run compile && node ./dist/index.js",
+    "build-redis": "docker build -t my-redis-lru:latest .",
     "start-redis": "docker run -d --name redis-lru -p 6379:6379 my-redis-lru:latest",
     "lint": "./node_modules/.bin/eslint src/."
   },

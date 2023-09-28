@@ -1,4 +1,4 @@
-import { downloadFile, resolvers, createDb, getAttributes } from "./resolvers";
+import {  resolvers, getFileFromUrl, getAttributes } from "./resolvers";
 
 
 

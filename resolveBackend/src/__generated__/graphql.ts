@@ -36,6 +36,7 @@ export type EntityCategoryAttribute = {
   description?: Maybe<Scalars['String']['output']>;
   displayName?: Maybe<Scalars['String']['output']>;
   displayPrecision?: Maybe<Scalars['Int']['output']>;
+  entityName?: Maybe<Scalars['String']['output']>;
   flags?: Maybe<Scalars['Int']['output']>;
   name?: Maybe<Scalars['String']['output']>;
 };

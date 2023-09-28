@@ -1,8 +1,10 @@
 import { createClient } from "redis";
+import _ from "lodash";
 
-type RedisClient = ReturnType<typeof createClient>;
+const REDIS_SERVER = "redis://localhost:6379";
 
-const redisServer = "localhost:6379";
+export type RedisClient = ReturnType<typeof createClient>;
+export type RedisAbstraction = ReturnType<typeof getRedisClient>;
 
 let redisClient: undefined | RedisClient;
 
@@ -11,9 +13,9 @@ export function getRedisClient() {
     redisClient,
     connect: _connect,
     disconnect: _disconnect,
-    checkLockKey: _checkLockKey,
-    setLockKey: _setLockKey,
-    removeLockKey: _removeLockKey,
+    isLockedWithKey: _isLockedWithKey,
+    setLockWithKey: _setLockWithKey,
+    removeLockWithKey: _removeLockWithKey,
   };
 }
 
@@ -25,38 +27,46 @@ function checkRedisClient(_redisClient): asserts _redisClient is RedisClient {
 }
 
 async function _connect() {
-  redisClient = await createClient({ url: redisServer })
+  if(redisClient) {
+    return;
+  }
+
+  redisClient = await createClient({ url: REDIS_SERVER })
     .on("error", (err) => console.log("Redis Client Error", err))
     .connect();
+
+  console.log("connected to redis.");
 }
 
 async function _disconnect() {
+  console.log("disconnected from redis.");
   redisClient.disconnect();
+  redisClient = undefined;
 }
 
 // Use for setting non LRU values that we want to persist the key
 //   a seperate DB to store the semaphores for downloading that have some sort of sane expiry or another date model
 //   to handle timeouts and failed downloads would have been good here.
-async function _setLockKey(key: string) {
+async function _setLockWithKey(key: string) {
   checkRedisClient(redisClient);
   try {
-    await redisClient.set(`LOCK_${key}`, Date.now());
+    await redisClient.set(`LOCK_${key}`, Date.now().toString());
     await redisClient.persist(`LOCK_${key}`);
   } catch (err) {
     console.error(`Error setting lock key ${key} in redis: ${err}`);
   }
 }
 
-async function _checkLockKey(key: string) {
+async function _isLockedWithKey(key: string) {
   checkRedisClient(redisClient);
   try {
-    return await redisClient.get(`LOCK_${key}`);
+    return await _.isEmpty(redisClient.get(`LOCK_${key}`)) === false;
   } catch (err) {
     console.error(`Error fetching checkLockKey ${key} in redis: ${err}`);
   }
 }
 
-async function _removeLockKey(key: string) {
+async function _removeLockWithKey(key: string) {
   checkRedisClient(redisClient);
   try {
     await redisClient.del(`LOCK_${key}`);
