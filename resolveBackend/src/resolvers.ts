@@ -1,34 +1,27 @@
-import { Database, default as sqlite3 } from "sqlite3";
+import { default as sqlite3 } from "sqlite3";
 import axios from "axios";
 import fs from "fs";
 import path from "path";
+import { PassThrough } from "stream";
 
 import { __dirname } from "./helpers.js";
 import {
   EntityCategory,
   EntityCategoryAttribute,
 } from "./__generated__/graphql.js";
+import { getRedisClient } from "./redisClient.js";
 
 sqlite3.verbose();
 
+const DEFAULT_FILE_URL =
+  "https://resolve-dev-public.s3.amazonaws.com/sample-data/interview/props.db";
+const DEFAULT_FILE_KEY = "PROPS";
+
 const dbFilePath = path.join(__dirname, "props.db");
 
-export async function downloadFile() {
-  const fileUrl =
-    "https://resolve-dev-public.s3.amazonaws.com/sample-data/interview/props.db";
-
+export async function getFileFromUrl(url: string) {
   try {
-    const response = await axios.get(fileUrl, { responseType: "stream" });
-
-    // Create a write stream to save the file
-    const writer = fs.createWriteStream(dbFilePath);
-
-    response.data.pipe(writer);
-
-    return new Promise((resolve, reject) => {
-      writer.on("finish", resolve);
-      writer.on("error", reject);
-    });
+    return await axios.get<string>(url);
   } catch (error) {
     console.error("Download failed:", error);
   }
@@ -36,7 +29,7 @@ export async function downloadFile() {
 
 export async function createDb(fileName: string): Promise<sqlite3.Database> {
   return new Promise((resolve, reject) => {
-    const db = new sqlite3.Database(dbFilePath, (errMessage) => {
+    const db = new sqlite3.Database(fileName, (errMessage) => {
       if (errMessage) {
         reject(errMessage);
       }
@@ -89,39 +82,43 @@ export async function getAttributes(
   return new Promise((resolve, reject) => {
     db.serialize(() => {
       // entityId has to come in as an ID from graphql
-      db.all(sqlGetAttributeRows, [entityId], (err, rows: EntityAtttributeRow[]) => {
-        if(err) { 
-          console.error(err);
-          reject(err);
-        }
-
-        const retData: { [key: string]: EntityAtttributeRow[] } = {};
-        let name;
-        for (const row of rows) {
+      db.all(
+        sqlGetAttributeRows,
+        [entityId],
+        (err, rows: EntityAtttributeRow[]) => {
           if (err) {
             console.error(err);
             reject(err);
           }
 
-          const category = row.category;
-
-          if (category === "__name__") {
-            name = row.attr_vals;
-          }
-
-          // filter all categories starting with "__" (internal)
-          if (!category.match(/^__/)) {
-            if (category in retData === false) {
-              retData[category] = [];
+          const retData: { [key: string]: EntityAtttributeRow[] } = {};
+          let name;
+          for (const row of rows) {
+            if (err) {
+              console.error(err);
+              reject(err);
             }
 
-            retData[category].push(row);
-          }
-        }
+            const category = row.category;
 
-        // finish parsing everything resolve the promise with the data.
-        resolve([name, retData]);
-      })
+            if (category === "__name__") {
+              name = row.attr_vals;
+            }
+
+            // filter all categories starting with "__" (internal)
+            if (!category.match(/^__/)) {
+              if (category in retData === false) {
+                retData[category] = [];
+              }
+
+              retData[category].push(row);
+            }
+          }
+
+          // finish parsing everything resolve the promise with the data.
+          resolve([name, retData]);
+        }
+      );
 
       // because we are sending back a graphql model lets just assume it's a view model being passed back to client to be displayed directly
 
@@ -168,29 +165,36 @@ export async function getAttributes(
 export const resolvers = {
   Query: {
     // async here should trigger "loading" status on graphql clients during long awais... aka downloading DB
-    entity: async (parent, args: { id: number }, contextValue, info) => {
+    entity: async (parent, args: { id: number }, contextValue, _info) => {
       // assume args.id is equal to our entity ID.
       const startTime = Date.now();
-      //
-      let dbData;
+      const redis: ReturnType<typeof getRedisClient> = contextValue.redisClient;
 
-      try {
-        // checking if database is downloaded already
-        dbData = await fs.promises.access(dbFilePath);
-      } catch (err) {
-        // doesn't exist we should download
-        // This is a pretty ridiculous way to do this.  It definitely would need at least some sort of semaphore to make this even remotely feasible.
-        //   I'm imagining you have a lot of sqlite databases hanging out in an S3 bucket or some such and we fetch them down to deal with the objects on a
-        //     per need basis.  I imagine that your use case is not supporting too many customers at the same time; or worse yet -> completely different customers
-        //     with different data sets.  So realistically; downloading them from S3/redis to disk would work.
-        //
-        //     I'd ideally have some sort of LRU caching of the databases either in memory or on local disk.  A local redis instance would work for that.
-        //       I cant really extrapolate without a discussion around what the sqlite db's look like (are they all around the same size?, etc).
-        //
-        //     I did specifically set this up to clear out the db after the request;
-        await downloadFile();
-        console.log("downloaded, loading file");
+      const dbCached = await redis.redisClient.exists(DEFAULT_FILE_KEY);
+
+      // if dbCached is < 1 then the key doesn't exist in redis and we need to populate it.
+      if (dbCached < 1) {
+        // semaphore to make sure we are the only server to download the sqlite db
+        if (!redis.checkLockKey(DEFAULT_FILE_KEY)) {
+          try {
+            // semaphore lock engage
+            await redis.setLockKey(DEFAULT_FILE_KEY);
+            const sqliteDbFile = await getFileFromUrl(DEFAULT_FILE_URL);
+            await redis.redisClient.set(DEFAULT_FILE_KEY, sqliteDbFile.data);
+          } catch (err) {
+            console.log(
+              `Error downloading db and redis handover ${err} - unsetting lock`
+            );
+          } finally {
+            // make sure we always remove the lock even if things go wrong so we can try and re-download.
+            await redis.removeLockKey(DEFAULT_FILE_KEY);
+          }
+        } else {
+          // we are semaphored out (we aren't the one downloading... so wait for the db key to be set)
+          await redis.redisClient.bzmPop(10000, DEFAULT_FILE_KEY, "MAX");
+        }
       }
+      console.log("downloaded, loading file");
 
       try {
         const db = await createDb(dbFilePath);
