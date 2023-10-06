@@ -21,6 +21,17 @@ open http://localhost:4000/
 You can preview the server response via the graphql interface
 ![Alt text](image.png)
 
+### Screencaps
+
+
+https://github.com/virtue3/resolveTest/assets/1501801/e885cae9-18a0-4e91-ae6d-67a590195472
+
+
+
+https://github.com/virtue3/resolveTest/assets/1501801/5be05bb6-7ced-41a8-aef8-67def14c05a7
+
+
+
 ### Why graphql?
 
 1. I thought that downloading and parsing the database would result in more overhead than it did.  The graphql apollo client for the web-client has mechanisms in place to handle long loads for long duration queries.  This turned out to be a non-issue but this demo could support larger downloads and delays between responses due to the "loading" state
@@ -42,4 +53,10 @@ hit the fetch button or enter another entity id to fetch a different entity.
 
 #### Testing
 
-I unfortunately did not have time to implement testing :(.  This is very uncharacteristic of me.  I made a tradeoff to get all the typing working.
+Only the backend has testing
+```
+cd resolveBackend
+npm run test
+```
+
+#### 
