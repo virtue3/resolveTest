@@ -10,6 +10,7 @@ export function getRedisClient() {
         isLockedWithKey: _isLockedWithKey,
         setLockWithKey: _setLockWithKey,
         removeLockWithKey: _removeLockWithKey,
+        multiSetAndRemoveLock: _multiSetAndRemoveLock
     };
 }
 // helper type assertions to make sure redis client is valid before using.
@@ -43,6 +44,7 @@ async function _setLockWithKey(key) {
     }
     catch (err) {
         console.error(`Error setting lock key ${key} in redis: ${err}`);
+        throw err;
     }
 }
 async function _isLockedWithKey(key) {
@@ -52,6 +54,7 @@ async function _isLockedWithKey(key) {
     }
     catch (err) {
         console.error(`Error fetching checkLockKey ${key} in redis: ${err}`);
+        throw err;
     }
 }
 async function _removeLockWithKey(key) {
@@ -61,5 +64,16 @@ async function _removeLockWithKey(key) {
     }
     catch (err) {
         console.error(`Error deleting lock key ${key} in redis: ${err}`);
+        throw err;
+    }
+}
+async function _multiSetAndRemoveLock(key, data, lockKey) {
+    checkRedisClient(redisClient);
+    try {
+        await redisClient.multi().set(key, data).del(`LOCK_${lockKey}`).exec();
+    }
+    catch (err) {
+        console.error(`Error setting data and deleting lock key ${key}: ${lockKey} in redis: ${err}`);
+        throw err;
     }
 }

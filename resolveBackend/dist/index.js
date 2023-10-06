@@ -5,7 +5,7 @@ import fs from "fs";
 import path from "path";
 import { resolvers } from "./resolvers.js";
 import { __dirname } from "./helpers.js";
-import { getRedisClient } from "./redisClient.js";
+import { getRedisClient } from "./redisClient";
 // load schema file up to get our gql types
 const schemaFile = fs.readFileSync(path.join(__dirname, "../schema.graphql"), "utf8");
 const typeDefs = gql(schemaFile);
@@ -19,7 +19,7 @@ const server = new ApolloServer({
 //  1. creates an Express app
 //  2. installs your ApolloServer instance as middleware
 //  3. prepares your app to handle incoming requests
-const { url } = await startStandaloneServer(server, {
+startStandaloneServer(server, {
     listen: { port: 4000 },
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     context: async () => {
@@ -29,5 +29,6 @@ const { url } = await startStandaloneServer(server, {
             redisClient,
         };
     },
+}).then(({ url }) => {
+    console.log(`🚀  Server ready at: ${url}`);
 });
-console.log(`🚀  Server ready at: ${url}`);

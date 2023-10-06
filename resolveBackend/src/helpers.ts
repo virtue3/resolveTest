@@ -5,13 +5,25 @@ import { default as sqlite3 } from "sqlite3";
 import fs from "fs";
 import path from "path";
 
-import { getRedisClient } from "./redisClient.js";
+import { getRedisClient } from "./redisClient";
 
 import {
+  Entity,
+  EntityCategory,
   EntityCategoryAttribute,
-} from "./__generated__/graphql.js";
+} from "./__generated__/graphql";
 
-export const __filename = fileURLToPath(import.meta.url);
+sqlite3.verbose();
+
+// import.meta.url es2020 having issues with jest / how project is configured, quick fix.
+//   really hosed myself with build targets / project settings here and this is not an easy fix for
+let metaUrl;
+if (process.env.NODE_ENV === "test") {
+  metaUrl = "file://";
+} else {
+  metaUrl = import.meta.url;
+}
+export const __filename = fileURLToPath(metaUrl);
 export const __dirname = path.dirname(__filename);
 
 export type EntityAtttributeRow = {
@@ -46,21 +58,23 @@ export function getRowAttrsToGQLAttrs(
 
 export type EntityWithNameAndAttributes = {
   entityName: string,
-  categories: { [key: string] : [EntityCategoryAttribute] }
+  entityId: string,
+  categories: { [key: string]: EntityCategoryAttribute[] }
 }
 
+// must be called inside db.serialize block!!!
 export function fetchEntityRow(db: sqlite3.Database, entityId: string): Promise<EntityWithNameAndAttributes> {
   return new Promise((resolve, reject) => {
-    const entJSON:EntityWithNameAndAttributes = {entityName: "", categories: {}};
+    const entJSON: EntityWithNameAndAttributes = { entityName: "", entityId, categories: {} };
     db.each(
       // do as much work in sqlite as we can as it's faster and we've already paid the cost of loading it.
       `SELECT oa.*, GROUP_CONCAT(ov.value) as attr_vals
     FROM _objects_attr oa
     JOIN _objects_eav oe ON oa.id = oe.attribute_id
     LEFT JOIN _objects_val ov ON oe.value_id = ov.id
-    WHERE oe.entity_id = ${entityId}
+    WHERE oe.entity_id = ?
     GROUP BY oa.id;
-    `,
+    `, [entityId],
       (err, row: EntityAtttributeRow) => {
         if (err) {
           console.error(`error fetching entityID ${entityId}`);
@@ -71,18 +85,19 @@ export function fetchEntityRow(db: sqlite3.Database, entityId: string): Promise<
 
         if (category === "__name__") {
           entJSON.entityName = row.attr_vals;
-        }
-
-        // filter all categories starting with "__" (internal)
-        if (!category.match(/^__/)) {
+          // filter all categories starting with "__" (internal)
+        } else if (!category.match(/^__/)) {
+          // let's immediately conver to GQL data to work with
+          const GQLRow = getRowAttrsToGQLAttrs(row);
           if (category in entJSON.categories === false) {
-            entJSON.categories[category] = [row];
+            entJSON.categories[category] = [GQLRow];
           } else {
-            entJSON.categories[category].push(row);
+            entJSON.categories[category].push(GQLRow);
           }
         }
+
       }, (err, _count) => {
-        if(err) {
+        if (err) {
           console.error(`error in db each for fetching entites ${entityId}`)
           return reject(err);
         }
@@ -92,7 +107,7 @@ export function fetchEntityRow(db: sqlite3.Database, entityId: string): Promise<
   });
 }
 
-export async function exportDBEntitiesAsJson(db: sqlite3.Database): Promise<object> {
+export async function exportDBEntitiesAsJson(db: sqlite3.Database): Promise<{ [key: string]: Entity }> {
   return new Promise((resolve, reject) => {
     db.serialize(() => {
       db.all('SELECT DISTINCT entity_id FROM _objects_eav;', [], (err, entityIds) => {
@@ -101,15 +116,42 @@ export async function exportDBEntitiesAsJson(db: sqlite3.Database): Promise<obje
         }
 
         // building up the giant json of all the entities to dump into redis.
-        const entityFetchPromises = [];
-        entityIds.forEach((entityId: {entity_id: string}) => {
+        const entityFetchPromises: [Promise<EntityWithNameAndAttributes>?] = [];
+
+        // iterate through every entity id and create a fetch rows promise for each entity_id
+        entityIds.forEach((entityId: { entity_id: string }) => {
           entityFetchPromises.push(fetchEntityRow(db, entityId.entity_id));
         });
-  
+
+        // if this was ~10x bigger we'd have to probably created a seperate redis db
+        //  for each "scene file" that we download and load the entities into it via 
+        //  hset on each entityID with the same expiry.  Then just do the database reload when the
+        //  data is stale.
         Promise.all(entityFetchPromises).then((values) => {
-          resolve(values);
+          // convert keyedByEntityId to GQL format so when we store it we do 0 conversion after fetching
+          //  if we are going to pay to JSON encode / decode we should pre-process as much as possible
+          const GQLEntityHash: { [key: string]: Entity } = {};
+          values.forEach((entity) => {
+            const categories = entity.categories;
+            const GQLEntityCategories: [EntityCategory?] = [];
+
+            for (const key in categories) {
+              GQLEntityCategories.push({
+                name: key,
+                attributes: entity.categories[key]
+              });
+            }
+
+            GQLEntityHash[entity.entityId] = {
+              id: entity.entityId,
+              name: entity.entityName,
+              categories: GQLEntityCategories
+            }
+          })
+
+          resolve(GQLEntityHash);
         }).catch((err) => {
-          console.error(`Error fetching entities ${err.message}`);
+          console.error(`Error fetching entities ${err}`);
           reject(err);
         });
       });
@@ -124,8 +166,8 @@ export async function checkIfFetchIdInRedis(fetchId: string) {
   return dbCached > 0
 }
 
-export async function getFetchIdFromRedis(fetchId: string): Promise<{ [key: string]: EntityCategoryAttribute[] | undefined }> {
-  const dbFromRedis = JSON.parse(await getRedisClient().redisClient.get(fetchId)) as { [key: string]: EntityCategoryAttribute[] | undefined };
+export async function getFetchIdFromRedis(fetchId: string) {
+  const dbFromRedis = JSON.parse(await getRedisClient().redisClient.get(fetchId)) as { [key: string]: Entity | undefined };
   return dbFromRedis;
 }
 
@@ -171,8 +213,8 @@ export async function deleteFilefromDisk(filePath: string): Promise<void> {
 export async function loadDbFromDisk(dbPath: string): Promise<sqlite3.Database> {
   return new Promise((resolve, reject) => {
     const db = new sqlite3.Database(path.resolve(__dirname, dbPath), (err) => {
-      if(err)  {
-        console.error("error loading db from disk");
+      if (err) {
+        console.error("error loading db from disk", err);
         return reject(err);
       }
 
