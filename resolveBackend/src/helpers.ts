@@ -11,6 +11,7 @@ import {
   Entity,
   EntityCategory,
   EntityCategoryAttribute,
+  Maybe,
 } from "./__generated__/graphql";
 
 sqlite3.verbose();
@@ -110,7 +111,7 @@ export function fetchEntityRow(db: sqlite3.Database, entityId: string): Promise<
 export async function exportDBEntitiesAsJson(db: sqlite3.Database): Promise<{ [key: string]: Entity }> {
   return new Promise((resolve, reject) => {
     db.serialize(() => {
-      db.all('SELECT DISTINCT entity_id FROM _objects_eav;', [], (err, entityIds) => {
+      db.all('SELECT DISTINCT entity_id FROM _objects_eav;', [], (err, entityIds: [{ entity_id: string }]) => {
         if (err) {
           return reject(err);
         }
@@ -132,8 +133,12 @@ export async function exportDBEntitiesAsJson(db: sqlite3.Database): Promise<{ [k
           //  if we are going to pay to JSON encode / decode we should pre-process as much as possible
           const GQLEntityHash: { [key: string]: Entity } = {};
           values.forEach((entity) => {
+            if(!entity) {
+              return;
+            }
+
             const categories = entity.categories;
-            const GQLEntityCategories: [EntityCategory?] = [];
+            const GQLEntityCategories: Maybe<EntityCategory>[] = [];
 
             for (const key in categories) {
               GQLEntityCategories.push({
@@ -161,13 +166,16 @@ export async function exportDBEntitiesAsJson(db: sqlite3.Database): Promise<{ [k
 
 
 export async function checkIfFetchIdInRedis(fetchId: string) {
-  const dbCached = await getRedisClient().redisClient.exists(fetchId);
+  const dbCached = await getRedisClient()?.redisClient?.exists(fetchId);
   // if dbCached is > 0 then the key exists in redis.
-  return dbCached > 0
+  if(dbCached) {
+    return dbCached > 0
+  }
+  return false;
 }
 
 export async function getFetchIdFromRedis(fetchId: string) {
-  const dbFromRedis = JSON.parse(await getRedisClient().redisClient.get(fetchId)) as { [key: string]: Entity | undefined };
+  const dbFromRedis = JSON.parse(await getRedisClient().redisClient?.get(fetchId) ?? "") as { [key: string]: Entity };
   return dbFromRedis;
 }
 

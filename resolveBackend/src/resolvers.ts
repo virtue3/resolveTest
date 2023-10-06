@@ -18,7 +18,7 @@ export async function getFileFromUrl(url: string) {
 
 export async function getFetchIDJson(redisAbs: RedisAbstraction, fileKey: string): Promise<{
   [key: string]: Entity;
-}> {
+} | undefined> {
   // step 1
   // check if we have the fetchID in redis
   const isInRedis = await checkIfFetchIdInRedis(fileKey);
@@ -69,7 +69,7 @@ export async function getFetchIDJson(redisAbs: RedisAbstraction, fileKey: string
   } else { //not locked, we want to block and wait for the data to be set in redis
     try {
       // we are semaphored out (we aren't the one downloading... so wait for the db key to be set)
-      await redisAbs.redisClient.bzmPop(30, fileKey, "MAX");
+      await redisAbs.redisClient?.bzmPop(30, fileKey, "MAX");
     } catch (err) {
       console.error(`Error waiting for other server to fetch ${fileKey} - ${err}`);
       throw err;
@@ -92,6 +92,10 @@ export const resolvers = {
       const startTime = Date.now();
 
       const jsonBlob = await getFetchIDJson(redisAbs, DEFAULT_FILE_KEY);
+
+      if(!jsonBlob) {
+        throw new Error(`could not fetch data for - ${DEFAULT_FILE_KEY}`)
+      }
 
       const entity = jsonBlob[`${args.id}`];
 
